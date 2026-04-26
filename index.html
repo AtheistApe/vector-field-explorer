@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vector Field Explorer — Math 253</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.2/math.min.js"></script>
+<style>
+:root {
+  --bg: #0f1419;
+  --panel: #1a2028;
+  --panel-2: #232b36;
+  --border: #2d3744;
+  --text: #e6edf3;
+  --text-dim: #9aa5b1;
+  --accent: #58a6ff;
+  --accent-2: #7ee787;
+  --warn: #ffa657;
+  --danger: #ff7b72;
+  --vector: #58a6ff;
+  --flow: #7ee787;
+  --curve-fwd: #ffa657;
+  --curve-bwd: #d2a8ff;
+  --paddle: #ffd866;
+  --diverge: #ff7b72;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0; height: 100%;
+  background: var(--bg); color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 13px; overflow: hidden;
+}
+.app { display: grid; grid-template-columns: 320px 1fr; height: 100vh; }
+
+.sidebar {
+  background: var(--panel); border-right: 1px solid var(--border);
+  overflow-y: auto; padding: 14px 16px;
+}
+.sidebar h1 {
+  font-size: 15px; font-weight: 600; margin: 0 0 4px 0;
+  color: var(--accent);
+}
+.sidebar .subtitle {
+  font-size: 11px; color: var(--text-dim); margin-bottom: 14px;
+}
+.section {
+  margin-bottom: 14px; padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.section:last-child { border-bottom: none; }
+.section-title {
+  font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.6px; color: var(--text-dim);
+  margin: 0 0 8px 0;
+}
+.field-row {
+  display: flex; align-items: center; gap: 6px; margin-bottom: 6px;
+}
+.field-row label {
+  font-family: "Cambria Math", "Latin Modern Math", Georgia, serif;
+  font-style: italic; font-size: 14px;
+  width: 36px; flex-shrink: 0;
+}
+.field-row input[type="text"], .field-row input[type="number"] {
+  flex: 1; min-width: 0;
+  padding: 5px 7px; background: var(--panel-2);
+  border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text); font-family: "JetBrains Mono", "Consolas", monospace;
+  font-size: 12px;
+}
+.field-row input:focus {
+  outline: none; border-color: var(--accent);
+}
+.field-row input.error { border-color: var(--danger); }
+.range-grid {
+  display: grid; grid-template-columns: 24px 1fr 1fr; gap: 6px; align-items: center;
+  margin-bottom: 6px;
+}
+.range-grid label {
+  font-family: "Cambria Math", Georgia, serif; font-style: italic; font-size: 13px;
+}
+.range-grid input {
+  padding: 4px 6px; background: var(--panel-2);
+  border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text); font-size: 12px; width: 100%;
+}
+.slider-row { margin-bottom: 8px; }
+.slider-row .label-line {
+  display: flex; justify-content: space-between;
+  font-size: 11px; color: var(--text-dim); margin-bottom: 3px;
+}
+.slider-row .label-line .value { color: var(--text); font-variant-numeric: tabular-nums; }
+input[type="range"] {
+  width: 100%; height: 4px; -webkit-appearance: none;
+  appearance: none; background: var(--border); border-radius: 2px; outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--accent); cursor: pointer; border: none;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--accent); cursor: pointer; border: none;
+}
+.toggle-row {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 6px; cursor: pointer;
+}
+.toggle-row span { font-size: 12px; }
+.toggle-row .switch {
+  position: relative; width: 32px; height: 18px;
+  background: var(--border); border-radius: 9px;
+  transition: background 0.15s;
+}
+.toggle-row .switch::after {
+  content: ''; position: absolute; top: 2px; left: 2px;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--text); transition: left 0.15s;
+}
+.toggle-row.on .switch { background: var(--accent); }
+.toggle-row.on .switch::after { left: 16px; background: white; }
+.btn {
+  display: block; width: 100%;
+  padding: 6px 10px; background: var(--panel-2);
+  border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text); cursor: pointer; font-size: 12px;
+  margin-bottom: 4px; text-align: left;
+}
+.btn:hover { background: var(--border); }
+.btn.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+.btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-bottom: 4px; }
+.btn-row .btn { margin-bottom: 0; }
+.preset-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 4px;
+}
+.preset-grid .btn {
+  margin-bottom: 0; padding: 5px 7px; font-size: 11px;
+  text-align: center;
+}
+.error-msg {
+  color: var(--danger); font-size: 11px; margin-top: 4px;
+  font-family: "JetBrains Mono", monospace;
+}
+.hint {
+  font-size: 11px; color: var(--text-dim);
+  font-style: italic; margin-top: 4px; line-height: 1.4;
+}
+
+.canvas-wrap {
+  position: relative; background: var(--bg);
+  display: flex; flex-direction: column; min-width: 0;
+}
+.toolbar {
+  display: flex; gap: 4px; padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel); flex-wrap: wrap;
+}
+.tool-btn {
+  padding: 5px 10px; background: transparent;
+  border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text); cursor: pointer; font-size: 11px;
+  white-space: nowrap;
+}
+.tool-btn:hover { background: var(--panel-2); }
+.tool-btn.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+.tool-spacer { flex: 1; }
+.tool-info {
+  font-size: 11px; color: var(--text-dim);
+  align-self: center; font-family: "JetBrains Mono", monospace;
+}
+canvas {
+  flex: 1; display: block; cursor: crosshair;
+  width: 100%; height: 100%;
+}
+.canvas-container { flex: 1; position: relative; }
+.readout {
+  position: absolute; top: 12px; right: 12px;
+  background: rgba(26, 32, 40, 0.92);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 10px 12px; font-size: 12px;
+  font-family: "JetBrains Mono", "Consolas", monospace;
+  pointer-events: none; min-width: 180px;
+  line-height: 1.6;
+}
+.readout .row { display: flex; justify-content: space-between; gap: 12px; }
+.readout .label { color: var(--text-dim); }
+.readout .val { color: var(--text); font-variant-numeric: tabular-nums; }
+.readout .val.pos { color: var(--accent-2); }
+.readout .val.neg { color: var(--danger); }
+.readout .title {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+  color: var(--accent); margin-bottom: 6px;
+  border-bottom: 1px solid var(--border); padding-bottom: 4px;
+}
+.legend {
+  position: absolute; bottom: 12px; left: 12px;
+  background: rgba(26, 32, 40, 0.85);
+  border: 1px solid var(--border); border-radius: 4px;
+  padding: 6px 10px; font-size: 11px;
+  color: var(--text-dim); font-family: "JetBrains Mono", monospace;
+  pointer-events: none;
+}
+</style>
+</head>
+<body>
+<div class="app">
+<aside class="sidebar">
+<h1>Vector Field Explorer</h1>
+<div class="subtitle">Math 253 · curl, divergence, flow</div>
+
+<div class="section">
+<div class="section-title">Vector field F(x, y)</div>
+<div class="field-row">
+<label>P =</label>
+<input type="text" id="fp" value="-y" autocomplete="off" spellcheck="false">
+</div>
+<div class="field-row">
+<label>Q =</label>
+<input type="text" id="fq" value="x" autocomplete="off" spellcheck="false">
+</div>
+<div id="parse-error" class="error-msg" style="display:none"></div>
+<div class="hint">Use x, y, t (time). Functions: sin, cos, exp, sqrt, ^, etc.</div>
+</div>
+
+<div class="section">
+<div class="section-title">Presets</div>
+<div class="preset-grid" id="presets"></div>
+</div>
+
+<div class="section">
+<div class="section-title">Plot range</div>
+<div class="range-grid">
+<label>x</label>
+<input type="number" id="xmin" value="-5" step="0.5">
+<input type="number" id="xmax" value="5" step="0.5">
+</div>
+<div class="range-grid">
+<label>y</label>
+<input type="number" id="ymin" value="-5" step="0.5">
+<input type="number" id="ymax" value="5" step="0.5">
+</div>
+<div class="btn-row">
+<button class="btn" id="reset-view">Reset view</button>
+<button class="btn" id="square-view">Square aspect</button>
+</div>
+<div class="hint">Drag canvas to pan, scroll to zoom.</div>
+</div>
+
+<div class="section">
+<div class="section-title">Display</div>
+<div class="slider-row">
+<div class="label-line"><span>Vector density</span><span class="value" id="density-val">25</span></div>
+<input type="range" id="density" min="8" max="60" value="25" step="1">
+</div>
+<div class="slider-row">
+<div class="label-line"><span>Vector length</span><span class="value" id="length-val">1.0</span></div>
+<input type="range" id="length" min="0.1" max="3" value="1" step="0.05">
+</div>
+<div class="toggle-row" id="toggle-flow"><span>Flow lines (streamlines)</span><div class="switch"></div></div>
+<div class="toggle-row on" id="toggle-color"><span>Color by magnitude</span><div class="switch"></div></div>
+<div class="toggle-row on" id="toggle-grid"><span>Show grid &amp; axes</span><div class="switch"></div></div>
+<div class="toggle-row" id="toggle-normalize"><span>Normalize lengths</span><div class="switch"></div></div>
+</div>
+
+<div class="section">
+<div class="section-title">Animation (flow)</div>
+<div class="btn-row">
+<button class="btn" id="anim-toggle">▶ Animate</button>
+<button class="btn" id="anim-clear">Clear particles</button>
+</div>
+<div class="slider-row">
+<div class="label-line"><span>Particles</span><span class="value" id="particles-val">800</span></div>
+<input type="range" id="particles" min="100" max="3000" value="800" step="50">
+</div>
+<div class="slider-row">
+<div class="label-line"><span>Speed</span><span class="value" id="speed-val">1.0</span></div>
+<input type="range" id="speed" min="0.1" max="3" value="1" step="0.05">
+</div>
+</div>
+
+<div class="section">
+<div class="section-title">Click tool</div>
+<div class="btn-row">
+<button class="tool-btn-side btn active" data-tool="trace">Trace curve</button>
+<button class="tool-btn-side btn" data-tool="paddle">Paddle wheel</button>
+</div>
+<div class="btn-row">
+<button class="tool-btn-side btn" data-tool="divergence">Divergence ring</button>
+<button class="tool-btn-side btn" data-tool="probe">Probe F(x,y)</button>
+</div>
+<div class="btn-row">
+<button class="tool-btn-side btn" data-tool="circulation">Loop (Green's)</button>
+<button class="tool-btn-side btn" data-tool="potential">Potential f</button>
+</div>
+<button class="btn" id="clear-tools">Clear all probes</button>
+<div class="hint" id="tool-hint">Click in field: trace forward (orange) and backward (purple) integral curves.</div>
+</div>
+
+<div class="section">
+<div class="section-title">Background overlay</div>
+<select id="overlay-select" style="width:100%;padding:5px 7px;background:var(--panel-2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:12px;">
+<option value="none">None</option>
+<option value="curl">curl F (k̂ component)</option>
+<option value="div">div F</option>
+<option value="speed">|F| (magnitude)</option>
+</select>
+<div id="conservative-badge" style="margin-top:8px;display:none;padding:6px 8px;border-radius:4px;font-size:11px;font-family:'JetBrains Mono',monospace;"></div>
+</div>
+</aside>
+
+<div class="canvas-wrap">
+<div class="toolbar">
+<button class="tool-btn active" data-toolbar-tool="trace">Trace</button>
+<button class="tool-btn" data-toolbar-tool="paddle">Paddle</button>
+<button class="tool-btn" data-toolbar-tool="divergence">Div ring</button>
+<button class="tool-btn" data-toolbar-tool="probe">Probe</button>
+<button class="tool-btn" data-toolbar-tool="circulation">Loop</button>
+<button class="tool-btn" data-toolbar-tool="potential">Potential</button>
+<div class="tool-spacer"></div>
+<div class="tool-info" id="cursor-info">x: — &nbsp; y: —</div>
+</div>
+<div class="canvas-container">
+<canvas id="canvas"></canvas>
+<div class="readout" id="readout" style="display:none"></div>
+<div class="legend" id="legend">drag to pan · scroll to zoom · click for probe</div>
+</div>
+</div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
