@@ -628,42 +628,62 @@ function drawPaddles() {
     ctx.font = "11px 'JetBrains Mono', monospace";
     ctx.textAlign = "left"; ctx.textBaseline = "top";
     const maxW = Math.max(...lines.map(l => ctx.measureText(l).width));
+    const pinSize = 18;
     const boxX = sx + r + 4, boxY = sy - r - 2;
-    const boxW = maxW + 24, boxH = lines.length * 14 + 4;
-    ctx.fillStyle = "rgba(15,20,25,0.85)";
+    const boxW = maxW + pinSize + 14, boxH = lines.length * 14 + 6;
+
+    // Highlight box on hover, so user can see they're about to interact
+    p._hovered = state.hover && (
+      // Mouse in the readout box
+      (Math.abs((cssMouseX ?? -1e9) - (boxX + boxW/2)) < boxW/2 + 4 &&
+       Math.abs((cssMouseY ?? -1e9) - (boxY + boxH/2)) < boxH/2 + 4)
+      ||
+      // Mouse over the paddle disc
+      (Math.hypot((cssMouseX ?? -1e9) - sx, (cssMouseY ?? -1e9) - sy) < r + 8)
+    );
+
+    ctx.fillStyle = p._hovered ? "rgba(40,55,75,0.95)" : "rgba(15,20,25,0.85)";
     ctx.fillRect(boxX, boxY, boxW, boxH);
+    if (p._hovered) {
+      ctx.strokeStyle = "rgba(255,216,102,0.6)";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(boxX, boxY, boxW, boxH);
+    }
     ctx.fillStyle = "#ffd866";
-    lines.forEach((l, i) => ctx.fillText(l, boxX + 4, boxY + 2 + i * 14));
+    lines.forEach((l, i) => ctx.fillText(l, boxX + 5, boxY + 3 + i * 14));
 
     // Pin/lock toggle button — top-right of the readout box
-    const pinSize = 12;
     const pinX = boxX + boxW - pinSize - 3;
-    const pinY = boxY + 2;
+    const pinY = boxY + (boxH - pinSize) / 2;
     p._pinHitbox = [pinX, pinY, pinSize, pinSize];
 
     ctx.save();
+    // Subtle background circle to make it feel like a button
     ctx.translate(pinX + pinSize / 2, pinY + pinSize / 2);
     if (p.fixed) {
-      // Filled pin — fixed
+      ctx.fillStyle = "rgba(255,123,114,0.25)";
+      ctx.beginPath(); ctx.arc(0, 0, pinSize/2 - 1, 0, 2*Math.PI); ctx.fill();
       ctx.fillStyle = "#ff7b72";
       ctx.strokeStyle = "#ff7b72";
     } else {
-      // Outlined pin — flowing
-      ctx.fillStyle = "rgba(255,216,102,0.2)";
-      ctx.strokeStyle = "rgba(255,216,102,0.7)";
+      ctx.fillStyle = p._hovered ? "rgba(255,216,102,0.3)" : "rgba(255,216,102,0.15)";
+      ctx.beginPath(); ctx.arc(0, 0, pinSize/2 - 1, 0, 2*Math.PI); ctx.fill();
+      ctx.fillStyle = "rgba(255,216,102,0.3)";
+      ctx.strokeStyle = p._hovered ? "#ffd866" : "rgba(255,216,102,0.8)";
     }
-    ctx.lineWidth = 1.2;
-    // Draw a simple thumbtack: triangle head + line
+    ctx.lineWidth = 1.4;
+    // Thumbtack: triangle head on top, line below
     ctx.beginPath();
-    ctx.moveTo(0, -4);
-    ctx.lineTo(3, 0);
-    ctx.lineTo(-3, 0);
+    ctx.moveTo(0, -5);
+    ctx.lineTo(4, -1);
+    ctx.lineTo(-4, -1);
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
     ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(0, 4);
+    ctx.moveTo(0, -1);
+    ctx.lineTo(0, 5);
+    ctx.lineWidth = 1.6;
     ctx.stroke();
     ctx.restore();
 
@@ -1208,8 +1228,10 @@ function animationFrame(now) {
     p.omega = isFinite(c) ? c / 2 : 0;
     p.angle += p.omega * dt * paddleSpeed;
 
-    // Translate along the flow when not pinned
-    if (!p.fixed) {
+    // Translate along the flow when not pinned and not being hovered (hover gives the
+    // user a chance to aim at the pin without chasing a moving target). The paddle
+    // continues spinning in either case so the curl readout stays live.
+    if (!p.fixed && !p._hovered) {
       const [u, v] = evalField(p.x, p.y, state.time);
       if (isFinite(u) && isFinite(v)) {
         const stepDt = dt * paddleSpeed;
@@ -1231,7 +1253,8 @@ function animationFrame(now) {
         p.x = p.x0; p.y = p.y0;
         p._trail = [];
       }
-    } else {
+    } else if (p.fixed) {
+      // Only clear trail when explicitly pinned, not on transient hover
       p._trail = null;
     }
   }
@@ -1263,6 +1286,10 @@ function resize() {
 // ------------------------------------------------------------
 // Mouse / interaction
 // ------------------------------------------------------------
+// Live mouse position in CSS pixels relative to canvas — used by the renderer
+// for hover-state visuals on paddle wheels and other interactive elements.
+let cssMouseX = null, cssMouseY = null;
+
 function mousePos(evt) {
   const rect = canvas.getBoundingClientRect();
   return [
@@ -1273,9 +1300,21 @@ function mousePos(evt) {
 
 canvas.addEventListener("mousemove", (e) => {
   const [sx, sy] = mousePos(e);
+  cssMouseX = sx; cssMouseY = sy;
   const [x, y] = screenToWorld(sx, sy);
   state.hover = { x, y };
   cursorInfo.textContent = `x: ${x.toFixed(2)}   y: ${y.toFixed(2)}`;
+
+  // Show pointer cursor when over a paddle pin
+  let overPin = false;
+  for (const p of state.paddles) {
+    if (!p._pinHitbox) continue;
+    const [hx, hy, hw, hh] = p._pinHitbox;
+    if (sx >= hx && sx <= hx + hw && sy >= hy && sy <= hy + hh) { overPin = true; break; }
+  }
+  if (!state.isPanning) {
+    canvas.style.cursor = overPin ? "pointer" : "crosshair";
+  }
 
   // Update right-side readout based on tool
   showHoverReadout(x, y);
@@ -1294,6 +1333,7 @@ canvas.addEventListener("mousemove", (e) => {
 
 canvas.addEventListener("mouseleave", () => {
   state.hover = null;
+  cssMouseX = null; cssMouseY = null;
   readoutEl.style.display = "none";
 });
 
