@@ -50,7 +50,7 @@ const state = {
 
   // Probes (placed objects)
   curves: [],          // {points: [...], color}
-  paddles: [],         // {x, y, angle, omega}
+  paddles: [],         // {x, y, x0, y0, angle, omega, fixed}
   divRings: [],        // {x, y, r, flux, div}
   probes: [],          // {x, y}
   loops: [],           // {vertices: [[x,y]], closed, circulation, doubleIntegral}
@@ -609,7 +609,6 @@ function drawPaddles() {
       ctx.moveTo(0, 0);
       ctx.lineTo(r - 3, 0);
       ctx.stroke();
-      // Blade rectangle
       ctx.fillRect(r - 8, -3.5, 6, 7);
       ctx.strokeRect(r - 8, -3.5, 6, 7);
       ctx.restore();
@@ -619,16 +618,68 @@ function drawPaddles() {
     ctx.fillStyle = "#ffd866"; ctx.fill();
     ctx.restore();
 
-    // Curl readout label
+    // Readout: curl, optional translational speed
     const curl = curlAt(p.x, p.y);
-    const txt = `ω = ${curl.toFixed(3)}`;
+    const [u, v] = evalField(p.x, p.y, state.time);
+    const speed = Math.hypot(u, v);
+    const lines = [`ω = ${curl.toFixed(3)}`];
+    if (!p.fixed) lines.push(`|v| = ${speed.toFixed(3)}`);
+
     ctx.font = "11px 'JetBrains Mono', monospace";
     ctx.textAlign = "left"; ctx.textBaseline = "top";
-    const tw = ctx.measureText(txt).width;
+    const maxW = Math.max(...lines.map(l => ctx.measureText(l).width));
+    const boxX = sx + r + 4, boxY = sy - r - 2;
+    const boxW = maxW + 24, boxH = lines.length * 14 + 4;
     ctx.fillStyle = "rgba(15,20,25,0.85)";
-    ctx.fillRect(sx + r + 4, sy - r - 2, tw + 8, 16);
+    ctx.fillRect(boxX, boxY, boxW, boxH);
     ctx.fillStyle = "#ffd866";
-    ctx.fillText(txt, sx + r + 8, sy - r);
+    lines.forEach((l, i) => ctx.fillText(l, boxX + 4, boxY + 2 + i * 14));
+
+    // Pin/lock toggle button — top-right of the readout box
+    const pinSize = 12;
+    const pinX = boxX + boxW - pinSize - 3;
+    const pinY = boxY + 2;
+    p._pinHitbox = [pinX, pinY, pinSize, pinSize];
+
+    ctx.save();
+    ctx.translate(pinX + pinSize / 2, pinY + pinSize / 2);
+    if (p.fixed) {
+      // Filled pin — fixed
+      ctx.fillStyle = "#ff7b72";
+      ctx.strokeStyle = "#ff7b72";
+    } else {
+      // Outlined pin — flowing
+      ctx.fillStyle = "rgba(255,216,102,0.2)";
+      ctx.strokeStyle = "rgba(255,216,102,0.7)";
+    }
+    ctx.lineWidth = 1.2;
+    // Draw a simple thumbtack: triangle head + line
+    ctx.beginPath();
+    ctx.moveTo(0, -4);
+    ctx.lineTo(3, 0);
+    ctx.lineTo(-3, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(0, 4);
+    ctx.stroke();
+    ctx.restore();
+
+    // Trail showing where this paddle has been (only when free-flowing)
+    if (!p.fixed && p._trail && p._trail.length > 2) {
+      ctx.strokeStyle = "rgba(255,216,102,0.4)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let i = 0; i < p._trail.length; i++) {
+        const [tx, ty] = p._trail[i];
+        const [tsx, tsy] = worldToScreen(tx, ty);
+        if (i === 0) ctx.moveTo(tsx, tsy);
+        else ctx.lineTo(tsx, tsy);
+      }
+      ctx.stroke();
+    }
   }
 }
 
@@ -1146,12 +1197,43 @@ function animationFrame(now) {
     updateParticles(dt, refMag);
   }
 
-  // Update paddle wheel rotations from local curl
+  // Update paddle wheel state from local field
+  // Always free to scale by user's animation speed slider so paddles feel synced with particles.
+  const paddleSpeed = state.speed;
+  const paddleRefMag = computeReferenceMag();
+  const margin = (state.xmax - state.xmin) * 0.05;
   for (const p of state.paddles) {
+    // Spin from local curl at the paddle's CURRENT location
     const c = curlAt(p.x, p.y);
-    // Curl k = ∂Q/∂x − ∂P/∂y is twice the local angular velocity for a rigid rotation.
-    p.omega = c / 2;
-    p.angle += p.omega * dt * (state.animating ? state.speed : 1.0);
+    p.omega = isFinite(c) ? c / 2 : 0;
+    p.angle += p.omega * dt * paddleSpeed;
+
+    // Translate along the flow when not pinned
+    if (!p.fixed) {
+      const [u, v] = evalField(p.x, p.y, state.time);
+      if (isFinite(u) && isFinite(v)) {
+        const stepDt = dt * paddleSpeed;
+        const [k1u, k1v] = [u, v];
+        const [k2u, k2v] = evalField(p.x + 0.5 * stepDt * k1u, p.y + 0.5 * stepDt * k1v, state.time);
+        const [k3u, k3v] = evalField(p.x + 0.5 * stepDt * k2u, p.y + 0.5 * stepDt * k2v, state.time);
+        const [k4u, k4v] = evalField(p.x + stepDt * k3u, p.y + stepDt * k3v, state.time);
+        p.x += stepDt * (k1u + 2*k2u + 2*k3u + k4u) / 6;
+        p.y += stepDt * (k1v + 2*k2v + 2*k3v + k4v) / 6;
+      }
+      // Accumulate trail
+      if (!p._trail) p._trail = [];
+      p._trail.push([p.x, p.y]);
+      if (p._trail.length > 60) p._trail.shift();
+      // If paddle drifts off screen, respawn at its original click location
+      if (!isFinite(p.x) || !isFinite(p.y) ||
+          p.x < state.xmin - margin || p.x > state.xmax + margin ||
+          p.y < state.ymin - margin || p.y > state.ymax + margin) {
+        p.x = p.x0; p.y = p.y0;
+        p._trail = [];
+      }
+    } else {
+      p._trail = null;
+    }
   }
 
   render();
@@ -1288,13 +1370,25 @@ function handleClick(e) {
   const [x, y] = screenToWorld(sx, sy);
   const refMag = computeReferenceMag();
 
+  // Check if click hits an existing paddle's pin button — toggles fixed state
+  for (const p of state.paddles) {
+    if (!p._pinHitbox) continue;
+    const [hx, hy, hw, hh] = p._pinHitbox;
+    if (sx >= hx && sx <= hx + hw && sy >= hy && sy <= hy + hh) {
+      p.fixed = !p.fixed;
+      // When unpinning, reset origin to current location so respawn lands here
+      if (!p.fixed) { p.x0 = p.x; p.y0 = p.y; p._trail = []; }
+      return;
+    }
+  }
+
   if (state.tool === "trace") {
     const fwd = integrateCurve(x, y, +1, 800, refMag);
     const bwd = integrateCurve(x, y, -1, 800, refMag);
     state.curves.push({ start: [x, y], points: fwd, color: "#ffa657" });
     state.curves.push({ start: [x, y], points: bwd, color: "#d2a8ff" });
   } else if (state.tool === "paddle") {
-    state.paddles.push({ x, y, angle: 0, omega: 0 });
+    state.paddles.push({ x, y, x0: x, y0: y, angle: 0, omega: 0, fixed: false });
   } else if (state.tool === "divergence") {
     const r = (state.xmax - state.xmin) * 0.04;
     state.divRings.push({ x, y, r, flux: 0, div: 0 });
@@ -1535,7 +1629,7 @@ function setupUI() {
 function updateToolHint() {
   const hints = {
     trace: "Click in field: trace forward (orange) and backward (purple) integral curves.",
-    paddle: "Click to drop a paddle wheel. It rotates at the local curl/2.",
+    paddle: "Click to drop a paddle wheel. It rides the flow, spinning at the local curl/2. Click the pin icon to fix it in place.",
     divergence: "Click to place a small circle. Shows ∇·F via outward arrows and flux integral.",
     probe: "Click to place a probe showing F(x,y) and its components at that point.",
     circulation: "Click vertices of a closed loop. Double-click (or press Enter) to close. Shows ∮F·dr vs ∬curl dA — Green's theorem.",
